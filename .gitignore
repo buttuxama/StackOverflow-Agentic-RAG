@@ -32,3 +32,9 @@ coverage.xml
 
 # macOS metadata
 .DS_Store
+
+# db files
+database/
+*.db
+*.db-shm
+*.db-wal

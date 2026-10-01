@@ -1,5 +1,5 @@
 import requests
-from minsearch import Index
+from sqlitesearch import TextSearchIndex
 
 
 def load_faq_data():
@@ -22,8 +22,14 @@ def load_faq_data():
 
 
 def build_index(documents):
-    index = Index(
-        text_fields=["question", "section", "answer"], keyword_fields=["course"]
+    index = TextSearchIndex(
+        text_fields=["question", "section", "answer"],
+        keyword_fields=["course"],
+        db_path="../database/faq.db",
     )
-    index.fit(documents)
+
+    for doc in documents:
+        index.add(doc)
+        print(f"""Added: {doc["question"][:60]}...""")
+    index.close()
     return index
