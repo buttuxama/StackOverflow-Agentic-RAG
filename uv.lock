@@ -1319,7 +1319,7 @@ wheels = [
 ]
 
 [[package]]
-name = "rag-faq"
+name = "stackoverflow-agentic-rag"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

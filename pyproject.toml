@@ -1,5 +1,5 @@
 [project]
-name = "rag-faq"
+name = "stackoverflow-agentic-rag"
 version = "0.1.0"
 description = "Agentic RAG with Stack Overflow retrieval and grounded answer synthesis"
 readme = "README.md"

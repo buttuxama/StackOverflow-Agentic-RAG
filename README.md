@@ -67,7 +67,7 @@ labels returned by the API. No answer evidence produces an insufficient-evidence
 ```text
 .
 ├── notebooks/demo.ipynb  # Interactive entry point
-├── src/rag_faq/
+├── src/stackoverflow_agentic_rag/
 │   ├── __init__.py       # Public package exports
 │   ├── agent.py          # Tool schemas, agent loop, and citations
 │   └── stackoverflow.py  # API retrieval, HTML extraction, and caching
@@ -76,7 +76,7 @@ labels returned by the API. No answer evidence produces an insufficient-evidence
 ```
 
 The core package needs only `openai` and `requests`. Notebook dependencies are optional.
-Import the agent with `from rag_faq import AgenticRAG`, supply a configured LLM client,
+Import the agent with `from stackoverflow_agentic_rag import AgenticRAG`, supply a configured LLM client,
 and call `agent.ask(question)`.
 
 ## Tradeoffs
