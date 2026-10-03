@@ -1,8 +1,6 @@
 # Python bytecode and caches
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.mypy_cache/
 .ruff_cache/
 
 # Virtual environments
@@ -13,8 +11,6 @@ env/
 # Local environment variables and secrets
 .env
 .env.*
-!.env.example
-!.env.sample
 
 # Jupyter notebook checkpoints
 .ipynb_checkpoints/
@@ -24,17 +20,5 @@ build/
 dist/
 *.egg-info/
 
-# Test coverage output
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-
 # macOS metadata
 .DS_Store
-
-# db files
-database/
-*.db
-*.db-shm
-*.db-wal
