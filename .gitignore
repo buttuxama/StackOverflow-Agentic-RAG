@@ -22,3 +22,11 @@ dist/
 
 # macOS metadata
 .DS_Store
+
+# Test and local tooling output
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.log
+.streamlit/secrets.toml

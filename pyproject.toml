@@ -9,13 +9,11 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "openai>=3.22.1",
-    "requests>=2.34.2",
-]
-
-[project.optional-dependencies]
-notebook = [
-    "jupyterlab>=4.5.0",
+    "pandas>=2.2",
+    "psycopg[binary]>=3.3.6",
     "python-dotenv>=1.2.3",
+    "requests>=2.34.2",
+    "streamlit>=1.65.0",
 ]
 
 [dependency-groups]
@@ -28,6 +26,16 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[project.scripts]
+stackoverflow-assistant = "stackoverflow_agentic_rag.cli:main"
+stackoverflow-db-init = "stackoverflow_agentic_rag.database:main"
+
 [build-system]
-requires = ["uv_build>=0.12.18,<0.13.0"]
+requires = ["uv_build>=0.12.18,<0.13"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+source-exclude = [".env", ".env.*", "**/__pycache__/**"]
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.py" }]

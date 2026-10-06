@@ -1,5 +1,6 @@
-"""Agentic RAG grounded in Stack Overflow questions and answers."""
+"""Agentic retrieval and grounded answers from Stack Overflow."""
 
-from .agent import DEFAULT_MODEL, AgentError, AgenticRAG
+from .agent import AgentError, AgenticRAG
+from .metrics import LLMCallRecord
 
-__all__ = ["DEFAULT_MODEL", "AgentError", "AgenticRAG"]
+__all__ = ["AgentError", "AgenticRAG", "LLMCallRecord"]

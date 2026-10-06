@@ -1,0 +1,12 @@
+# Allow only files needed to build and run the application.
+*
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!README.md
+!app.py
+!src/
+!src/stackoverflow_agentic_rag/
+!src/stackoverflow_agentic_rag/*.py
+!.streamlit/
+!.streamlit/config.toml

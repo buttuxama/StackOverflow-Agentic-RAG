@@ -1,6 +1,7 @@
 """Function-based Stack Overflow retrieval tools for the RAG agent."""
 
 import math
+import re
 from copy import deepcopy
 from html import unescape
 from html.parser import HTMLParser
@@ -13,6 +14,10 @@ API_URL = "https://api.stackexchange.com/2.3"
 CACHE_TTL = 60
 CACHE_SIZE = 128
 REQUEST_TIMEOUT = 20
+SEARCH_STOP_WORDS = frozenset(
+    "a an and are as at be by do does for from how i in is it of on or that the "
+    "this to using what when with without".split()
+)
 _CACHE: dict[tuple, tuple[float, list[dict]]] = {}
 _BACKOFF: dict[str, float] = {}
 
@@ -106,17 +111,28 @@ def search_stackoverflow(
     query: str,
     *,
     tags: tuple[str, ...] = (),
-    limit: int = 8,
+    title: str = "",
+    limit: int = 12,
     session: requests.Session,
 ) -> list[dict]:
-    """Return question candidates in the API's relevance order."""
+    """Find answered questions in API relevance order and expose keyword matches."""
     if not isinstance(query, str) or not query.strip():
         raise ValueError("Search query cannot be empty")
     if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError("Search limit must be between 1 and 100")
+    if not isinstance(title, str):
+        raise ValueError("Title filter must be a string")
     if any(not isinstance(tag, str) or not tag.strip() or ";" in tag for tag in tags):
         raise ValueError("Pass individual, nonempty tag strings")
-    params = {"q": query.strip(), "sort": "relevance", "order": "desc", "pagesize": limit}
+    params = {
+        "q": query.strip(),
+        "sort": "relevance",
+        "order": "desc",
+        "pagesize": limit,
+        "answers": 1,
+    }
+    if title.strip():
+        params["title"] = title.strip()
     if tags:
         params["tagged"] = ";".join(sorted({tag.strip().lower() for tag in tags}))
     items = _request("search/advanced", params, session=session)
@@ -152,7 +168,15 @@ def search_stackoverflow(
             }
     except KeyError, TypeError, ValueError:
         raise StackOverflowError("Stack Overflow returned an invalid question.") from None
-    return list(questions.values())
+    # Keywords are a relevance signal, not a semantic relevance guarantee. Keep
+    # synonyms/alternative wording eligible; the agent checks actual constraints.
+    keywords = set(re.findall(r"\w+(?:[.+#-]\w+)*[+#]*", query.casefold())) - SEARCH_STOP_WORDS
+    for question in questions.values():
+        title_words = set(re.findall(r"\w+(?:[.+#-]\w+)*[+#]*", question["title"].casefold()))
+        body_words = set(re.findall(r"\w+(?:[.+#-]\w+)*[+#]*", question["body"].casefold()))
+        question["matched_keywords"] = sorted(keywords & (title_words | body_words))
+        question["title_matched_keywords"] = sorted(keywords & title_words)
+    return list(questions.values())[:limit]
 
 
 def get_answers(

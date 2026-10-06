@@ -1,0 +1,15 @@
+[theme]
+base = "light"
+primaryColor = "#176b53"
+backgroundColor = "#f8faf9"
+secondaryBackgroundColor = "#edf3ef"
+textColor = "#26332d"
+font = "'IBM Plex Sans':https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
+baseRadius = "6px"
+borderColor = "#dce5df"
+showWidgetBorder = true
+chartCategoricalColors = ["#176b53", "#7562a8", "#b07134"]
+
+[browser]
+gatherUsageStats = false

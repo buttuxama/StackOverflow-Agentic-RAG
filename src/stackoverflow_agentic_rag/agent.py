@@ -1,22 +1,41 @@
 """Agentic retrieval, relevance selection, and grounded answer synthesis."""
 
 import json
+import logging
 import re
+import time
+from dataclasses import replace
 
 import requests
 from openai import OpenAI
+from openai.types.chat import ChatCompletionMessage
 
+from .config import DEFAULT_MODEL, Settings, get_settings
+from .metrics import LLMCallRecord, calculate_cost
 from .stackoverflow import StackOverflowError, get_answers, search_stackoverflow
 
-DEFAULT_MODEL = "gemma4:31b"
+logger = logging.getLogger(__name__)
 QUESTION_BODY_LIMIT = 3_000
 ANSWER_BODY_LIMIT = 8_000
 INSTRUCTIONS = """
 You are a programming assistant grounded in retrieved Stack Overflow answers.
-1. Search Stack Overflow using concise keywords, error messages, and applicable tags.
+1. Identify the programming language/library, operation or error, and constraints.
+   Search using 3-6 distinctive keywords, not the entire natural-language question.
+   Keep important identifiers, API names, and error text. Do not invent a solution
+   and search only for it. Prefer one known Stack Overflow language/library tag;
+   omit tags if their exact names are uncertain. Multiple tags match ANY tag, not all.
+   Use the optional title filter only for a distinctive phrase likely in a title.
+   Examples: "remove duplicates list preserve order" with ["python"], or
+   "attempted relative import" with ["python"], or "no pq wrapper" with [].
+   If zero or irrelevant candidates return, shorten the query to its distinctive
+   operation/error, remove the title filter or uncertain tags, or try a synonym.
+   Change one constraint per retry; do not repeat identical unsuccessful searches.
 2. Evaluate the returned questions against the user's actual problem. Rerank them by
-   relevance, considering the title, question body, tags, and score. Call get_answers
-   with up to three question IDs in your chosen relevance order.
+   relevance, considering the title, question body, tags, and score. Keyword overlap
+   helps discovery but is not proof of relevance: check the same operation, library,
+   data type, error, and user constraints. Search again if no candidate fits instead
+   of fetching unrelated answers. Call get_answers with up to three matching question
+   IDs in your chosen relevance order. Prefer direct matches over popular tangents.
 3. Read the question AND its retrieved answers. If the evidence is weak, refine your
    search and retrieve other answers. Never fetch invented or unrelated question IDs.
 4. Rewrite the supported solutions into a clear answer to the user. Include useful
@@ -36,15 +55,28 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "search_stackoverflow",
-            "description": "Search for Stack Overflow question candidates ranked by API relevance.",
+            "description": (
+                "Find answered Stack Overflow questions using focused keywords. Results expose "
+                "keyword matches; verify semantic relevance before fetching answers. "
+                "Relax query/title/tags if no suitable questions return."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "Concise programming search keywords",
+                        "description": "3-6 operation/error keywords; preserve API names",
                     },
-                    "tags": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 3,
+                        "description": "Prefer one known tag; [] if unsure. Tags match ANY.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional title text; omit/empty for broad search",
+                    },
                 },
                 "required": ["query", "tags"],
                 "additionalProperties": False,
@@ -125,12 +157,16 @@ class AgenticRAG:
         *,
         model: str = DEFAULT_MODEL,
         max_steps: int = 6,
+        settings: Settings | None = None,
     ) -> None:
         if type(max_steps) is not int or not 2 <= max_steps <= 20:
             raise ValueError("max_steps must be between 2 and 20")
         self.llm_client = llm_client
         self.model = model
         self.max_steps = max_steps
+        self.settings = settings or get_settings()
+        self.last_call: LLMCallRecord | None = None
+        self.calls: list[LLMCallRecord] = []
 
     def _tool(
         self,
@@ -146,13 +182,14 @@ class AgenticRAG:
         if not isinstance(args, dict):
             raise ValueError("Tool arguments must be a JSON object")
         if name == "search_stackoverflow":
-            if set(args) != {"query", "tags"}:
+            if not {"query", "tags"} <= set(args) or set(args) - {"query", "tags", "title"}:
                 raise ValueError("Search requires query and tags")
             if not isinstance(args["tags"], list) or len(args["tags"]) > 3:
                 raise ValueError("Supply up to three tag strings")
             candidates = search_stackoverflow(
                 args["query"],
                 tags=tuple(args["tags"]),
+                title=args.get("title", ""),
                 session=session,
             )
             results = []
@@ -164,7 +201,17 @@ class AgenticRAG:
                 else:
                     questions[qid] = candidate
                     results.append(candidate)
-            return {"questions": results}
+            return {
+                "query": args["query"],
+                "tags": args["tags"],
+                "title": args.get("title", ""),
+                "questions": results,
+                "next_step": (
+                    "Check relevance and fetch answers for matching IDs; search again if none fit."
+                    if results
+                    else "No answered questions matched. Shorten query or relax title/tags."
+                ),
+            }
         if name != "get_answers":
             raise ValueError("Unknown tool")
         ids = args.get("question_ids")
@@ -217,20 +264,65 @@ class AgenticRAG:
             )
         return {"ranked_questions_and_answers": results}
 
-    def _complete(self, messages: list[dict], tool_choice: str | dict):
+    def _complete(self, messages: list[dict], tool_choice: str | dict) -> ChatCompletionMessage:
+        start_time = time.perf_counter()
+
         response = self.llm_client.chat.completions.create(
             model=self.model,
             messages=messages,
             tools=TOOLS,
             tool_choice=tool_choice,
+            temperature=0,
         )
+        response_time = time.perf_counter() - start_time
+
         if not response.choices:
             raise AgentError("The model returned no completion.")
-        return response.choices[0].message
+
+        message = response.choices[0].message
+        usage = response.usage
+
+        record = LLMCallRecord(
+            model=self.model,
+            prompt=json.dumps(messages, ensure_ascii=False),
+            instructions=INSTRUCTIONS,
+            answer=message.content or "",
+            prompt_tokens=usage.prompt_tokens if usage is not None else None,
+            completion_tokens=usage.completion_tokens if usage is not None else None,
+            total_tokens=usage.total_tokens if usage is not None else None,
+            response_time=response_time,
+            cost=calculate_cost(usage, self.settings) if usage is not None else None,
+        )
+        logger.debug("LLM call completed in %.2fs (%s tokens)", response_time, record.total_tokens)
+        self.last_call = record
+        self.calls.append(record)
+
+        return message
+
+    def _finish(self, answer: str, question: str, started: float) -> str:
+        """Summarize all agent calls and persist the complete displayed answer."""
+        if self.last_call is not None:
+            totals = {}
+            for attribute in ("prompt_tokens", "completion_tokens", "total_tokens", "cost"):
+                values = [getattr(call, attribute) for call in self.calls]
+                totals[attribute] = sum(values) if all(v is not None for v in values) else None
+            self.last_call = replace(
+                self.last_call,
+                answer=answer,
+                question=question,
+                response_time=time.perf_counter() - started,
+                **totals,
+            )
+        return answer
 
     def ask(self, question: str) -> str:
+        started = time.perf_counter()
+        self.last_call = None
+        self.calls.clear()
+
         if not isinstance(question, str) or not question.strip():
             raise ValueError("Question cannot be empty")
+
         messages = [
             {"role": "system", "content": INSTRUCTIONS},
             {"role": "user", "content": question},
@@ -238,7 +330,6 @@ class AgenticRAG:
         questions: dict[int, dict] = {}
         sources: list[dict] = []
         loaded: set[int] = set()
-        answer_attempted = False
         tool_count = 0
         with requests.Session() as session:
             for _ in range(self.max_steps):
@@ -246,15 +337,13 @@ class AgenticRAG:
                     break
                 if not questions:
                     choice = {"type": "function", "function": {"name": "search_stackoverflow"}}
-                elif not sources and not answer_attempted:
-                    choice = {"type": "function", "function": {"name": "get_answers"}}
                 else:
                     choice = "auto"
                 message = self._complete(messages, choice)
                 calls = message.tool_calls or []
                 if not calls:
                     if sources and message.content and message.content.strip():
-                        return _render(message.content, sources)
+                        return self._finish(_render(message.content, sources), question, started)
                     messages.append({"role": "assistant", "content": message.content or ""})
                     messages.append(
                         {
@@ -277,8 +366,6 @@ class AgenticRAG:
                         result = {"error": "Tool budget exhausted; use existing evidence."}
                     else:
                         tool_count += 1
-                        if call.function.name == "get_answers":
-                            answer_attempted = True
                         try:
                             result = self._tool(
                                 call.function.name,
@@ -294,7 +381,11 @@ class AgenticRAG:
                         {"role": "tool", "tool_call_id": call.id, "content": json.dumps(result)}
                     )
         if not sources:
-            return "I couldn't retrieve sufficient Stack Overflow evidence to answer your question."
+            return self._finish(
+                "I couldn't retrieve sufficient Stack Overflow evidence to answer your question.",
+                question,
+                started,
+            )
         messages.append(
             {
                 "role": "system",
@@ -307,4 +398,4 @@ class AgenticRAG:
         message = self._complete(messages, "none")
         if message.tool_calls or not message.content or not message.content.strip():
             raise AgentError("The model did not produce a final answer.")
-        return _render(message.content, sources)
+        return self._finish(_render(message.content, sources), question, started)
